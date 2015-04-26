@@ -1,0 +1,5 @@
+sudo avrdude -c avrispmkII -P usb -p m328p
+sudo make atmega328_isp
+
+sudo avrdude -b 57600 -F -e -c arduino -P [port location] -p atmega328p -U flash:w:[hex file path]
+sudo avrdude -b 57600 -F -e -c arduino -P /dev/ttyUSB0 -p atmega328p -U flash:w:uart_test.hex
