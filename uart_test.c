@@ -5,33 +5,51 @@
 #include <util/delay.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 
 #define BAUD 115200
 #include <util/setbaud.h>
 
+// variables and such
+time_t current_time = 0, stop_time = 0;
+int stopped = 0;
+
+// function prototypes
+void toggle_leds(void);
+
+void disable_motors(void);
+void enable_motors(void);
+
+void heed_sensors(void);
+
+int read_cmd(char *buf, int buffer_size);
+void parse_cmd(char *buf, int size);
+
+void slave_mode(void);
+
 #define DEBUG 1
 void uart_init(void) {
-   UBRR0H = UBRRH_VALUE;
-   UBRR0L = UBRRL_VALUE;
+  UBRR0H = UBRRH_VALUE;
+  UBRR0L = UBRRL_VALUE;
 
-   #if USE_2X
-      UCSR0A |= _BV(U2X0);
-   #else
-      UCSR0A &= ~(_BV(U2X0));
-   #endif
+  #if USE_2X
+    UCSR0A |= _BV(U2X0);
+  #else
+    UCSR0A &= ~(_BV(U2X0));
+  #endif
 
-   UCSR0C = _BV(UCSZ01) | _BV(UCSZ00); /* 8-bit data */
-   UCSR0B = _BV(RXEN0) | _BV(TXEN0);   /* Enable RX and TX */
+  UCSR0C = _BV(UCSZ01) | _BV(UCSZ00); /* 8-bit data */
+  UCSR0B = _BV(RXEN0) | _BV(TXEN0);   /* Enable RX and TX */
 }
 
 void uart_putchar(char c) {
-   loop_until_bit_is_set(UCSR0A, UDRE0); /* Wait until data register empty. */
-   UDR0 = c;
+  loop_until_bit_is_set(UCSR0A, UDRE0); /* Wait until data register empty. */
+  UDR0 = c;
 }
 
 char uart_getchar(void) {
-   loop_until_bit_is_set(UCSR0A, RXC0); /* Wait until data exists. */
-   return UDR0;
+  loop_until_bit_is_set(UCSR0A, RXC0); /* Wait until data exists. */
+  return UDR0;
 }
 
 FILE uart_output = FDEV_SETUP_STREAM(uart_putchar, NULL, _FDEV_SETUP_WRITE);
@@ -40,24 +58,21 @@ FILE uart_io = FDEV_SETUP_STREAM(uart_putchar, uart_getchar, _FDEV_SETUP_RW);
 
 void InitADC()
 {
- ADMUX |= (1<<REFS0);						// Select Vref=AVcc
- ADCSRA |= (1<<ADPS2)|(1<<ADPS1)|(1<<ADPS0)|(1<<ADEN);    	//set prescaller to 128 and enable ADC 
+  ADMUX |= (1<<REFS0);						// Select Vref=AVcc
+  ADCSRA |= (1<<ADPS2)|(1<<ADPS1)|(1<<ADPS0)|(1<<ADEN);    	//set prescaller to 128 and enable ADC 
 }
 
 uint16_t ReadADC(uint8_t ADCport)
 {
- ADMUX = (ADMUX & 0xF0) | (ADCport & 0x0F);			//select ADC port with safety mask
- ADCSRA |= (1<<ADSC);						//single conversion mode
- while( ADCSRA & (1<<ADSC) );					// wait until ADC conversion is complete
- return ADC;
+  ADMUX = (ADMUX & 0xF0) | (ADCport & 0x0F);			//select ADC port with safety mask
+  ADCSRA |= (1<<ADSC);						//single conversion mode
+  while (ADCSRA & (1<<ADSC));					// wait until ADC conversion is complete
+  return ADC;
 }
 
 void moveForward(int dutycyclel, int dutycycler)
 {
-    DDRD |= (1 << DDD3);			// PD3
-    DDRB |= (1 << DDB2); 			// PB2
-    DDRD |= (1 << DDD5);			// PD5
-    DDRD |= (1 << DDD6);			// PD6
+  enable_motors();
 
     // Timer0 Registers (for PD5,PD6)
     OCR0A = 0;					// Set PWM Duty Cycle for PD6 (max 255)
@@ -82,12 +97,10 @@ void moveForward(int dutycyclel, int dutycycler)
     TCCR1B |= (1 << WGM12)|(1 << WGM13);	// set fast PWM Mode with OCRnx as top value
     TCCR1B |= (1 << CS11);			// set prescaler to 8 and starts PWM
 }
+
 void moveBackward(int dutycyclel, int dutycycler)
 {
-    DDRD |= (1 << DDD3);			// PD3
-    DDRB |= (1 << DDB2); 			// PB2
-    DDRD |= (1 << DDD5);			// PD5
-    DDRD |= (1 << DDD6);			// PD6
+  enable_motors();
 
     // Timer0 Registers (for PD5,PD6)
     OCR0A = dutycycler;				// Set PWM Duty Cycle for PD6 (max 255)
@@ -112,12 +125,10 @@ void moveBackward(int dutycyclel, int dutycycler)
     TCCR1B |= (1 << WGM12)|(1 << WGM13);	// set fast PWM Mode with OCRnx as top value
     TCCR1B |= (1 << CS11);			// set prescaler to 8 and starts PWM
 }
+
 void moveLeft(int dutycyclel, int dutycycler)
 {
-    DDRD |= (1 << DDD3);			// PD3
-    DDRB |= (1 << DDB2); 			// PB2
-    DDRD |= (1 << DDD5);			// PD5
-    DDRD |= (1 << DDD6);			// PD6
+  enable_motors();
 
     // Timer0 Registers (for PD5,PD6)
     OCR0A = 0;					// Set PWM Duty Cycle for PD6 (max 255)
@@ -141,12 +152,10 @@ void moveLeft(int dutycyclel, int dutycycler)
     TCCR1B |= (1 << WGM12)|(1 << WGM13);	// set fast PWM Mode with OCRnx as top value
     TCCR1B |= (1 << CS11);			// set prescaler to 8 and starts PWM
 }
+
 void moveRight(int dutycyclel,int dutycycler)
 {
-    DDRD |= (1 << DDD3);			// PD3
-    DDRB |= (1 << DDB2); 			// PB2
-    DDRD |= (1 << DDD5);			// PD5
-    DDRD |= (1 << DDD6);			// PD6
+  enable_motors();
 
     // Timer0 Registers (for PD5,PD6)
     OCR0A = dutycycler;				// Set PWM Duty Cycle for PD6 (max 255)
@@ -170,12 +179,11 @@ void moveRight(int dutycyclel,int dutycycler)
     TCCR1B |= (1 << WGM12)|(1 << WGM13);	// set fast PWM Mode with OCRnx as top value
     TCCR1B |= (1 << CS11);			// set prescaler to 8 and starts PWM
 }
+
 void moveStop()
 {
-    DDRD &= ~(1 << DDD3);			// PD3
-    DDRB &= ~(1 << DDB2); 			// PB2
-    DDRD &= ~(1 << DDD5);			// PD5
-    DDRD &= ~(1 << DDD6);			// PD6
+  disable_motors();
+  stopped = 1;
 }
 
 void auto_mode() 
@@ -237,7 +245,7 @@ void manual_mode()
 	    _delay_ms(1);
 	    //printf("\r\nPlease enter the input in the format : <dir> <l1><l0> <r1><r0>\r\n");
 	    //char dir   = getchar();
-  	      if( bit_is_set(UCSR0A, RXC0) != 0) {
+	      if( bit_is_set(UCSR0A, RXC0) != 0) {
 	       	    char dir = UDR0;
 	 	    printf("UDR0 = %c\r\n",dir);
 
@@ -313,44 +321,163 @@ void manual_mode()
 
   	     }
 	     else if( discardSensors!=1 ) {
-			  _delay_ms(50);
-			  int adc_val0=ReadADC(0);
-			  _delay_ms(50);
-			  int adc_val1=ReadADC(1);
-			  _delay_ms(50);
-			  int adc_val2=ReadADC(2);
-			  printf("Sensor Readings :  ClifL = %d, ClifR = %d, Bump = %d\r\n",adc_val0,adc_val1,adc_val2);
-
-			  if( (adc_val0 < 100) ) {
-			  //if( (adc_val0 < 100) | (adc_val1 < 100) | (adc_val2 < 100) ) {
-				moveStop();
-				printf("Robot stops\r\n");
-				_delay_ms(0500);
-				
-				moveBackward(160,160);
-				printf("Robot moves backward\r\n");
-				_delay_ms(1000);
-
-				moveStop();
-				printf("Robot stops\r\n");
-				_delay_ms(0500);
-				
-				moveRight(160,160);
-				printf("Robot moves Right\r\n");
-				_delay_ms(0500);
-
-				moveStop();
-				printf("Robot stops\r\n");
-				_delay_ms(0500);
-			  }
+               heed_sensors();
             }
   }
 }
 
+//
+// DAN CODE BELOW
+//
+int to_us(int sec, int usec) {
+  return (100000 * sec) + usec;
+}
+
+void toggle_leds(void)
+{
+  PORTB ^= 0x2;
+}
+
+void enable_motors(void)
+{
+  //PORTB |= 0x4; // PB2
+  //PORTD |= 0x68; // PD3, PD5, PD6
+  DDRB |= (1 << DDB2); // PB2
+  DDRD |= (1 << DDD3) | (1 << DDD5) | (1 << DDD6); // PD3, PD5, PD6
+}
+
+void disable_motors(void)
+{
+  //PORTB &= ~(0x4); // PB2
+  //PORTD &= ~(0x68); // PD3, PD5, PD6
+  DDRB &= ~(1 << DDB2); // PB2
+  DDRD &= ~((1 << DDD3) | (1 << DDD5) | (1 << DDD6)); // PD3, PD5, PD6
+}
+
+void heed_sensors(void)
+{
+  _delay_ms(50);
+  int adc_val0 = ReadADC(0);
+  _delay_ms(50);
+  int adc_val1 = ReadADC(1);
+  _delay_ms(50);
+  int adc_val2 = ReadADC(2);
+  printf("Sensor Readings :  ClifL = %d, ClifR = %d, Bump = %d\r\n", adc_val0, adc_val1, adc_val2);
+
+  if (adc_val0 < 100) {
+  //if( (adc_val0 < 100) | (adc_val1 < 100) | (adc_val2 < 100) ) {
+    moveStop();
+    printf("Robot stops\r\n");
+    _delay_ms(0500);
+    
+    moveBackward(160,160);
+    printf("Robot moves backward\r\n");
+    _delay_ms(1000);
+
+    moveStop();
+    printf("Robot stops\r\n");
+    _delay_ms(0500);
+    
+    moveRight(160,160);
+    printf("Robot moves Right\r\n");
+    _delay_ms(0500);
+
+    moveStop();
+    printf("Robot stops\r\n");
+    _delay_ms(0500);
+  }
+//			}else{
+//				moveForward(160,160);
+//				printf("Robot moves forward\r\n");
+//			}
+//		}
+
+}
+
+#define BUFFER_SIZE 64
+char cmd_buf[BUFFER_SIZE];
+
+int read_cmd(char *buf, int buffer_size)
+{
+  int size = -1;
+  buf[0] = ' ';
+  while (size < buffer_size - 1)
+  {
+    ++size;
+    buf[size] = getchar();
+    if (buf[size] == 'q') {
+      break;
+    }
+  }
+  buf[size] = '\0';
+  return size;
+}
+
+#define CMD_TIMEOUT_S 1
+void parse_cmd(char *buf, int size)
+{
+  if (size < 1)
+    return;
+
+  toggle_leds();
+
+  char cmd = buf[0];
+  if (cmd == 'k') {
+    moveStop();
+  }
+
+  int arg_l = 255, arg_r = 255;
+  if (size >= 5) {
+    sscanf(buf+2, "%d %d", &arg_l, &arg_r);
+  }
+  switch (cmd) {
+    case 'w':
+      moveForward(arg_l, arg_r);
+      break;
+    case 'a':
+      moveLeft(arg_l, arg_r);
+      break;
+    case 's':
+      moveBackward(arg_l, arg_r);
+      break;
+    case 'd':
+      moveRight(arg_l, arg_r);
+      break;
+    default:
+      return;
+  }
+  stopped = 0;
+  stop_time = current_time + 1;
+  //_delay_ms(CMD_TIMEOUT_MS);
+  //moveStop();
+}
+
+void clear_stdin()
+{
+  while (bit_is_set(UCSR0A, RXC0))
+    getchar();
+}
+
+void slave_mode()
+{
+  //current_time = time(NULL);
+  //if (!stopped && current_time >= stop_time) {
+  //  moveStop();
+  //}
+  
+  heed_sensors();
+
+  if (!bit_is_set(UCSR0A, RXC0))
+    return;
+
+  int size = read_cmd(cmd_buf, BUFFER_SIZE);
+  printf("CMD: [%s]\n", cmd_buf);
+  
+  //parse_cmd(cmd_buf, size);
+}
 
 int main(void)
 {
-
   /* Setup serial port */
   uart_init();
   stdout = &uart_output;
@@ -360,19 +487,22 @@ int main(void)
   InitADC();
   moveStop();
 
-  // Setup ports
+  // Setup LEDs
   DDRB |= (1<<1) | (1<<0);
   PORTB |= (1<<0);
   PORTB &= ~(1<<1);
 
-  /* Print hello and then echo serial
-  ** port data while blinking LED */
-  //printf("Hello world!\r\n");
-  //PORTB ^= 0x01;
+  // Setup Motor Pins
+  DDRD |= (1 << DDD3);			// PD3
+  DDRB |= (1 << DDB2); 			// PB2
+  DDRD |= (1 << DDD5);			// PD5
+  DDRD |= (1 << DDD6);			// PD6
 
+  clear_stdin();
+  stopped = 1;
 
   while(1) {
-	manual_mode();
+    slave_mode();
   }
-
 }
+
