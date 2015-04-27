@@ -11,8 +11,6 @@
 #include <util/setbaud.h>
 
 // variables and such
-time_t current_time = 0, stop_time = 0;
-int stopped = 0;
 
 // function prototypes
 void toggle_leds(void);
@@ -23,9 +21,11 @@ void enable_motors(void);
 void heed_sensors(void);
 
 int read_cmd(char *buf, int buffer_size);
-void parse_cmd(char *buf, int size);
 
 void slave_mode(void);
+
+void auto_mode(void);
+void manual_mode(void);
 
 #define DEBUG 1
 void uart_init(void) {
@@ -183,7 +183,6 @@ void moveRight(int dutycyclel,int dutycycler)
 void moveStop()
 {
   disable_motors();
-  stopped = 1;
 }
 
 void auto_mode() 
@@ -238,6 +237,7 @@ void auto_mode()
 //		}
       }
 }
+
 void manual_mode() 
 {
     int discardSensors = 1;
@@ -335,7 +335,7 @@ int to_us(int sec, int usec) {
 
 void toggle_leds(void)
 {
-  PORTB ^= 0x2;
+  PORTB ^= 0x3;
 }
 
 void enable_motors(void)
@@ -354,44 +354,52 @@ void disable_motors(void)
   DDRD &= ~((1 << DDD3) | (1 << DDD5) | (1 << DDD6)); // PD3, PD5, PD6
 }
 
+
+void escape_danger(void)
+{
+  moveStop();
+  printf("Robot stops\r\n");
+  _delay_ms(0500);
+  
+  moveBackward(160,160);
+  printf("Robot moves backward\r\n");
+  _delay_ms(1000);
+
+  moveStop();
+  printf("Robot stops\r\n");
+  _delay_ms(0500);
+  
+  moveRight(160,160);
+  printf("Robot moves Right\r\n");
+  _delay_ms(0500);
+
+  moveStop();
+  printf("Robot stops\r\n");
+  _delay_ms(0500);
+}
+
+// delay between each ADC read
+#define CHECK_DELAY 50
+
+// messages to send back to the PI
+#define CLIFF_LEFT_MSG "E:CL"
+#define CLIFF_RIGHT_MSG "E:CR"
+#define BUMP_MSG "E:B"
+
 void heed_sensors(void)
 {
-  _delay_ms(50);
-  int adc_val0 = ReadADC(0);
-  _delay_ms(50);
-  int adc_val1 = ReadADC(1);
-  _delay_ms(50);
-  int adc_val2 = ReadADC(2);
-  printf("Sensor Readings :  ClifL = %d, ClifR = %d, Bump = %d\r\n", adc_val0, adc_val1, adc_val2);
+  _delay_ms(CHECK_DELAY);
+  int cliff_l = ReadADC(0);
+  _delay_ms(CHECK_DELAY);
+  int cliff_r = ReadADC(1);
+  _delay_ms(CHECK_DELAY);
+  int bump = ReadADC(2);
+  printf("Sensor Readings :  ClifL = %d, ClifR = %d, Bump = %d\r\n", cliff_l, cliff_r, bump);
 
-  if (adc_val0 < 100) {
-  //if( (adc_val0 < 100) | (adc_val1 < 100) | (adc_val2 < 100) ) {
-    moveStop();
-    printf("Robot stops\r\n");
-    _delay_ms(0500);
-    
-    moveBackward(160,160);
-    printf("Robot moves backward\r\n");
-    _delay_ms(1000);
-
-    moveStop();
-    printf("Robot stops\r\n");
-    _delay_ms(0500);
-    
-    moveRight(160,160);
-    printf("Robot moves Right\r\n");
-    _delay_ms(0500);
-
-    moveStop();
-    printf("Robot stops\r\n");
-    _delay_ms(0500);
+  if (cliff_l < 100) {
+    printf("%s\n", CLIFF_LEFT_MSG);
+    escape_danger();
   }
-//			}else{
-//				moveForward(160,160);
-//				printf("Robot moves forward\r\n");
-//			}
-//		}
-
 }
 
 #define BUFFER_SIZE 64
@@ -413,23 +421,23 @@ int read_cmd(char *buf, int buffer_size)
   return size;
 }
 
-#define CMD_TIMEOUT_S 1
-void parse_cmd(char *buf, int size)
+void run_cmd(char cmd)
 {
-  if (size < 1)
-    return;
-
   toggle_leds();
+  
+  printf("%c", cmd);
 
-  char cmd = buf[0];
   if (cmd == 'k') {
     moveStop();
+    return;
   }
 
+  //int size = read_cmd(cmd_buf, BUFFER_SIZE);
+
   int arg_l = 255, arg_r = 255;
-  if (size >= 5) {
-    sscanf(buf+2, "%d %d", &arg_l, &arg_r);
-  }
+  //if (size >= 4) {
+  //  sscanf(cmd_buf, " %d %d", &arg_l, &arg_r);
+  //}*/
   switch (cmd) {
     case 'w':
       moveForward(arg_l, arg_r);
@@ -446,10 +454,6 @@ void parse_cmd(char *buf, int size)
     default:
       return;
   }
-  stopped = 0;
-  stop_time = current_time + 1;
-  //_delay_ms(CMD_TIMEOUT_MS);
-  //moveStop();
 }
 
 void clear_stdin()
@@ -460,20 +464,17 @@ void clear_stdin()
 
 void slave_mode()
 {
-  //current_time = time(NULL);
-  //if (!stopped && current_time >= stop_time) {
-  //  moveStop();
-  //}
-  
   heed_sensors();
+}
 
-  if (!bit_is_set(UCSR0A, RXC0))
-    return;
+/**
+ * ISR for getting commands from the PI
+ **/
+ISR(USART_RX_vect, ISR_BLOCK)
+{
+  char cmd = UDR0;
 
-  int size = read_cmd(cmd_buf, BUFFER_SIZE);
-  printf("CMD: [%s]\n", cmd_buf);
-  
-  //parse_cmd(cmd_buf, size);
+  run_cmd(cmd);
 }
 
 int main(void)
@@ -498,10 +499,13 @@ int main(void)
   DDRD |= (1 << DDD5);			// PD5
   DDRD |= (1 << DDD6);			// PD6
 
-  clear_stdin();
-  stopped = 1;
+  // Enable Interrupts to Receive Commands
+  UCSR0B |= (1<<RXCIE0) | (1<<RXEN0) | (1<<TXEN0); // Enable the USART Receive Complete interrupt 
+  sei(); // Enable Global Interrupt Flag so that interrupts can be processed
 
-  while(1) {
+  clear_stdin();
+
+  while (1) {
     slave_mode();
   }
 }
