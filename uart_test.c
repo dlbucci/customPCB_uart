@@ -22,7 +22,7 @@ void heed_sensors(void);
 
 int read_cmd(char *buf, int buffer_size);
 
-void slave_mode(void);
+void run(void);
 
 void auto_mode(void);
 void manual_mode(void);
@@ -329,9 +329,6 @@ void manual_mode()
 //
 // DAN CODE BELOW
 //
-int to_us(int sec, int usec) {
-  return (100000 * sec) + usec;
-}
 
 void toggle_leds(void)
 {
@@ -354,28 +351,26 @@ void disable_motors(void)
   DDRD &= ~((1 << DDD3) | (1 << DDD5) | (1 << DDD6)); // PD3, PD5, PD6
 }
 
-
+#define STOP_TIME_MS 200
+#define BACK_TIME_MS 1000
+#define MIN_TURN_MS 500
+#define TURN_VAR_MS 800
 void escape_danger(void)
 {
   moveStop();
-  printf("Robot stops\r\n");
-  _delay_ms(0500);
+  _delay_ms(STOP_TIME_MS);
   
   moveBackward(160,160);
-  printf("Robot moves backward\r\n");
-  _delay_ms(1000);
+  _delay_ms(BACK_TIME_MS);
 
   moveStop();
-  printf("Robot stops\r\n");
-  _delay_ms(0500);
+  _delay_ms(STOP_TIME_MS);
   
   moveRight(160,160);
-  printf("Robot moves Right\r\n");
-  _delay_ms(0500);
+  _delay_ms(MIN_TURN_MS);
 
   moveStop();
-  printf("Robot stops\r\n");
-  _delay_ms(0500);
+  _delay_ms(STOP_TIME_MS);
 }
 
 // delay between each ADC read
@@ -388,13 +383,13 @@ void escape_danger(void)
 
 void heed_sensors(void)
 {
-  _delay_ms(CHECK_DELAY);
+  //_delay_ms(CHECK_DELAY);
   int cliff_l = ReadADC(0);
-  _delay_ms(CHECK_DELAY);
+  //_delay_ms(CHECK_DELAY);
   int cliff_r = ReadADC(1);
-  _delay_ms(CHECK_DELAY);
+  //_delay_ms(CHECK_DELAY);
   int bump = ReadADC(2);
-  printf("Sensor Readings :  ClifL = %d, ClifR = %d, Bump = %d\r\n", cliff_l, cliff_r, bump);
+  //printf("Sensor Readings :  ClifL = %d, ClifR = %d, Bump = %d\r\n", cliff_l, cliff_r, bump);
 
   if (cliff_l < 100) {
     printf("%s\n", CLIFF_LEFT_MSG);
@@ -404,6 +399,8 @@ void heed_sensors(void)
 
 #define BUFFER_SIZE 64
 char cmd_buf[BUFFER_SIZE];
+int cmd_len;
+int cmd_ready;
 
 int read_cmd(char *buf, int buffer_size)
 {
@@ -421,17 +418,18 @@ int read_cmd(char *buf, int buffer_size)
   return size;
 }
 
-void run_cmd(char cmd)
+void run_cmd()
 {
   toggle_leds();
   
-  printf("%c", cmd);
+  printf("CMD: %s\n", cmd_buf);
+  char cmd = cmd_buf[0];
 
-  if (cmd == 'k') {
+  if (cmd == 's') {
     moveStop();
     return;
   }
-
+  
   //int size = read_cmd(cmd_buf, BUFFER_SIZE);
 
   int arg_l = 255, arg_r = 255;
@@ -439,16 +437,16 @@ void run_cmd(char cmd)
   //  sscanf(cmd_buf, " %d %d", &arg_l, &arg_r);
   //}*/
   switch (cmd) {
-    case 'w':
+    case 'f':
       moveForward(arg_l, arg_r);
       break;
-    case 'a':
+    case 'b':
       moveLeft(arg_l, arg_r);
       break;
-    case 's':
+    case 'l':
       moveBackward(arg_l, arg_r);
       break;
-    case 'd':
+    case 'r':
       moveRight(arg_l, arg_r);
       break;
     default:
@@ -462,8 +460,13 @@ void clear_stdin()
     getchar();
 }
 
-void slave_mode()
+void run()
 {
+  if (cmd_ready) {
+    run_cmd();
+    cmd_ready = 0;
+    cmd_len = 0;
+  }
   heed_sensors();
 }
 
@@ -474,7 +477,12 @@ ISR(USART_RX_vect, ISR_BLOCK)
 {
   char cmd = UDR0;
 
-  run_cmd(cmd);
+  if (cmd != '\n') {
+    cmd_buf[cmd_len++] = cmd;
+  } else {
+    cmd_buf[cmd_len] = '\0';
+    cmd_ready = 1;
+  }
 }
 
 int main(void)
@@ -505,8 +513,11 @@ int main(void)
 
   clear_stdin();
 
+  cmd_len = 0;
+  cmd_ready = 0;
+
   while (1) {
-    slave_mode();
+    run();
   }
 }
 
