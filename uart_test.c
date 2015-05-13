@@ -11,6 +11,12 @@
 #include <util/setbaud.h>
 
 // variables and such
+#define BUFFER_SIZE 64
+#define DEFAULT_SPEED 255
+char cmd_buf[BUFFER_SIZE];
+int cmd_len;
+int cmd_ready;
+int arg_l = DEFAULT_SPEED, arg_r = DEFAULT_SPEED;
 
 // function prototypes
 void toggle_leds(void);
@@ -351,26 +357,24 @@ void disable_motors(void)
   DDRD &= ~((1 << DDD3) | (1 << DDD5) | (1 << DDD6)); // PD3, PD5, PD6
 }
 
+// to make sure the pi sends a message before it's over, ensure that
+// 2 * STOP_TIME_MS + BACK_TIME_MS > 500
 #define STOP_TIME_MS 200
-#define BACK_TIME_MS 1000
+#define BACK_TIME_MS 500
 #define MIN_TURN_MS 500
 #define TURN_VAR_MS 800
 void escape_danger(void)
 {
   moveStop();
   _delay_ms(STOP_TIME_MS);
-  
-  moveBackward(160,160);
+
+  moveBackward(arg_l, arg_r);
   _delay_ms(BACK_TIME_MS);
 
   moveStop();
   _delay_ms(STOP_TIME_MS);
-  
-  moveRight(160,160);
-  _delay_ms(MIN_TURN_MS);
 
-  moveStop();
-  _delay_ms(STOP_TIME_MS);
+  printf("ED\n");
 }
 
 // delay between each ADC read
@@ -380,6 +384,7 @@ void escape_danger(void)
 #define CLIFF_LEFT_MSG "E:CL"
 #define CLIFF_RIGHT_MSG "E:CR"
 #define BUMP_MSG "E:B"
+#define FORWARD_IR_MSG "E:FIR"
 
 void heed_sensors(void)
 {
@@ -390,17 +395,22 @@ void heed_sensors(void)
   //_delay_ms(CHECK_DELAY);
   int bump = ReadADC(2);
   //printf("Sensor Readings :  ClifL = %d, ClifR = %d, Bump = %d\r\n", cliff_l, cliff_r, bump);
+  int forward_ir = ReadADC(3);
 
   if (cliff_l < 100) {
     printf("%s\n", CLIFF_LEFT_MSG);
     escape_danger();
+  } else if (cliff_r < 100) {
+    printf("%s\n", CLIFF_RIGHT_MSG);
+    escape_danger();
+  } else if (bump < 100) {
+    printf("%s\n", BUMP_MSG);
+    escape_danger();
+  } else if (forward_ir >= 300) {
+    printf("%s\n", FORWARD_IR_MSG);
+    escape_danger();
   }
 }
-
-#define BUFFER_SIZE 64
-char cmd_buf[BUFFER_SIZE];
-int cmd_len;
-int cmd_ready;
 
 int read_cmd(char *buf, int buffer_size)
 {
@@ -428,23 +438,23 @@ void run_cmd()
   if (cmd == 's') {
     moveStop();
     return;
+  } else if (cmd == 'e') {
+    escape_danger();
+    return;
   }
   
-  //int size = read_cmd(cmd_buf, BUFFER_SIZE);
-
-  int arg_l = 255, arg_r = 255;
-  //if (size >= 4) {
-  //  sscanf(cmd_buf, " %d %d", &arg_l, &arg_r);
-  //}*/
+  if (cmd_len >= 5) {
+    sscanf(cmd_buf+2, "%d %d", &arg_l, &arg_r);
+  }
   switch (cmd) {
     case 'f':
       moveForward(arg_l, arg_r);
       break;
     case 'b':
-      moveLeft(arg_l, arg_r);
+      moveBackward(arg_l, arg_r);
       break;
     case 'l':
-      moveBackward(arg_l, arg_r);
+      moveLeft(arg_l, arg_r);
       break;
     case 'r':
       moveRight(arg_l, arg_r);
